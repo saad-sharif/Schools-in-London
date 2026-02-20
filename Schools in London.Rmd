@@ -1,0 +1,2202 @@
+---
+title: 'Assessment 3: Exploratory Data Analysis and Visualisation'
+CID: '06000562'
+output: pdf_document
+date: '2025-03-16'
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library('ggplot2')
+library('tseries')
+library('gridExtra')
+library('dplyr')
+library('corrplot')
+library('ggpubr')
+library('GGally')
+library('lubridate')
+library('naniar')
+library('sf')
+library('MissMech')
+library('mice')
+
+library('cluster')
+library('factoextra')
+library('purrr') 
+library('patchwork')
+library('ggrepel')
+
+```
+
+
+## Initial Investigation of Dataset
+
+First we will import the data for energy demand in the UK.
+
+```{r}
+data <- read.csv('london_schools_data.csv', stringsAsFactors = FALSE)
+```
+
+Now we will check the dimensions of the dataset (number of rows and columns) and the data types of each variable.
+
+```{r}
+dim(data)
+str(data)
+```
+
+
+```{r}
+
+data <- data %>%
+  rename(
+    `School Name` = school_name,
+    `Unique Reference Number` = urn,
+    `Borough` = borough,
+    `LSOA` = lsoa_code,
+    `LSOA Name` = lsoa_name,
+    `Longitude` = lon,
+    `Latitude` = lat,
+    `School Level` = primary_secondary,
+    `School Type` = school_type,
+    `Admissions Type` = admissions_type,
+    `Gender` = gender,
+    `Denomination` = denomination,
+    `Number Of Pupils` = num_pupils,
+    `Number Of Boys` = num_boys,
+    `Number Of Girls` = num_girls,
+    `Boy To Girl Ratio` = boy_girl_r,
+    `Pupils Per Teacher` = pupils_per_teacher,
+    `English Second Language (%)` = pct_esl,
+    `Free School Meals (%)` = pct_fsm,
+    `Attainment (%)` = pct_attainment,
+    `Absences (%)` = pct_absences,
+    `Unauthorised Absences (%)` = pct_unaut_absence,
+    `Mean Distance (km)` = mean_distance,
+    `Income Score` = income_score,
+    `Employment Score` = employment_score,
+    `Crime Score` = crime_score,
+    `Education Skills Score` = education_skills_score,
+    `Health Score` = health_score,
+    `Ofsted Rating` = ofsted
+  )
+
+data <- data %>%
+  mutate(
+    `English Second Language (%)` = `English Second Language (%)` * 100,
+    `Free School Meals (%)` = `Free School Meals (%)` * 100,
+    `Attainment (%)` = `Attainment (%)` * 100,
+    `Absences (%)` = `Absences (%)` * 100,
+    `Unauthorised Absences (%)` = `Unauthorised Absences (%)` * 100
+  )
+
+```
+
+
+```{r}
+
+data$`School Name` <- as.factor(data$`School Name`)
+data$`Borough` <- as.factor(data$`Borough`)
+data$`LSOA` <- as.factor(data$`LSOA`)
+data$`LSOA Name` <- as.factor(data$`LSOA Name`)
+data$`School Level` <- as.factor(data$`School Level`)
+data$`School Type` <- as.factor(data$`School Type`)
+data$`Admissions Type` <- as.factor(data$`Admissions Type`)
+data$`Gender` <- as.factor(data$`Gender`)
+data$`Denomination` <- as.factor(data$`Denomination`)
+
+```
+
+
+
+
+# Any issues of data quality, such as missing data or outliers
+
+
+Now we will check for any records that having missing information in the dataset.
+
+
+```{r fig.width=18, fig.height=10}
+
+# Calculate NA counts
+na_counts <- colSums(is.na(data))
+
+# Filter to variables with NAs
+na_df <- data.frame(
+  variable = names(na_counts),
+  na_count = as.numeric(na_counts)
+) |>
+  subset(na_count > 0)
+
+# Plot
+ggplot(na_df, aes(x = reorder(variable, na_count), y = na_count)) +
+  geom_bar(stat = 'identity', fill = 'steelblue') +
+  geom_text(aes(label = na_count), hjust = -0.2, size = 8) +
+  labs(
+    title = 'Number of Missing Values per Variable',
+    x = 'Variable',
+    y = 'Number of NAs'
+  ) +
+  coord_flip() +
+  ylim(0, 600) +  # Apply limit to horizontal axis due to coord_flip
+  theme(
+    plot.title = element_text(size = 40, hjust = 0.5),
+    axis.title = element_text(size = 24),
+    axis.text = element_text(size = 24),
+    plot.margin = margin(t = 20, r = 20, b = 20, l = 10)
+  )
+
+
+```
+
+
+
+```{r}
+summary(data)
+```
+
+
+```{r fig.width=15, fig.height=12}
+
+df_subset <- data[, c('School Type', 'Admissions Type', 'Denomination', 'English Second Language (%)', 'Attainment (%)', 'Absences (%)', 'Unauthorised Absences (%)', 'Mean Distance (km)')]
+
+gg_miss_upset(
+  df_subset,
+  nsets = ncol(df_subset),      
+  nintersects = NA,
+  text.scale = c(3, 3, 3, 3, 3, 3)
+)
+
+
+```
+
+
+
+
+```{r}
+
+colSums(is.na(df_subset))
+
+
+```
+
+```{r}
+data$intersection_1 <- ifelse(
+  !is.na(data$`Attainment (%)`) & is.na(data$`Absences (%)`) & is.na(data$`School Type`) & is.na(data$`Admissions Type`)  & is.na(data$`Denomination`)  & is.na(data$`English Second Language (%)`)  & is.na(data$`Unauthorised Absences (%)`) & is.na(data$`Mean Distance (km)`),
+  'Missing',
+  'Not Missing'
+)
+
+data$intersection_2 <- ifelse(
+  is.na(data$`Attainment (%)`) & is.na(data$`Mean Distance (km)`) & !is.na(data$`Absences (%)`),
+  'Missing',
+  'Not Missing'
+)
+data$intersection_2_and_3 <- ifelse(
+  is.na(data$`Attainment (%)`) & !is.na(data$`Absences (%)`),
+  'Missing',
+  'Not Missing'
+)
+data$intersection_2_and_4 <- ifelse(
+  is.na(data$`Attainment (%)`) & is.na(data$`Mean Distance (km)`),
+  'Missing',
+  'Not Missing'
+)
+
+
+data_intersections <- data
+data_intersections$`Ofsted Rating` <-as.factor(data_intersections$`Ofsted Rating`)
+
+
+```
+
+
+```{r fig.width=25, fig.height=10}
+
+color_vars <- c('Borough',
+'School Level',
+#'School Type',
+#'Admissions Type',
+'Gender',
+#'Denomination',
+'Number Of Pupils',
+'Number Of Boys',
+'Number Of Girls',
+'Boy To Girl Ratio',
+'Pupils Per Teacher',
+#'English Second Language (%)',
+'Free School Meals (%)',
+#'Attainment (%)',
+#'Absences (%)',
+#'Unauthorised Absences (%)',
+#'Mean Distance (km)',
+'Income Score',
+'Employment Score',
+'Crime Score',
+'Education Skills Score',
+'Health Score',
+'Ofsted Rating'
+)
+
+# Function to check if a variable is numeric
+is_numeric_var <- function(data_intersections, var) {
+  return(is.numeric(data_intersections[[var]]))  # This correctly checks if the column is numeric
+}
+
+# Iterate over variables and create plots
+for (var in color_vars) {
+  if (is.numeric(data_intersections[[var]])) {
+    # Boxplot for numerical variables
+    p <- ggplot(data_intersections, aes(x = intersection_1, y = .data[[var]], fill = intersection_1)) +
+      geom_boxplot() +
+      labs(title = paste('Boxplot of', var, 'by Intersection 1'),
+           x = 'Intersection Status',
+           y = var) +
+      theme_minimal() +
+      theme(
+    legend.position = 'none',
+    plot.title = element_text(size = 28, hjust = 0.5),  # Bigger, centered
+    axis.title = element_text(size = 18),
+    axis.text = element_text(size = 18),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10)
+    )  } else {
+    # Bar chart for categorical variables
+    p <- ggplot(data_intersections, aes(x = .data[[var]], fill = intersection_1)) +
+      geom_bar(position = 'dodge') +
+      labs(title = paste('Bar Chart of', var, 'by Intersection 1'),
+           x = var,
+           y = 'Count') +
+      theme_minimal() +
+      theme(
+    legend.position = 'none',
+    plot.title = element_text(size = 28, hjust = 0.5),  # Bigger, centered
+    axis.title = element_text(size = 18),
+    axis.text = element_text(size = 18),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10),axis.text.x = element_text(angle = 45, hjust = 1)
+      )  
+    }
+  
+  # Print the plot
+  print(p)
+}
+
+
+```
+
+```{r fig.width=12, fig.height=12}
+
+color_vars <- c('Borough',
+'School Level',
+#'School Type',
+#'Admissions Type',
+'Gender',
+#'Denomination',
+'Number Of Pupils',
+'Number Of Boys',
+'Number Of Girls',
+'Boy To Girl Ratio',
+'Pupils Per Teacher',
+#'English Second Language (%)',
+'Free School Meals (%)',
+#'Attainment (%)',
+#'Absences (%)',
+#'Unauthorised Absences (%)',
+#'Mean Distance (km)',
+'Income Score',
+'Employment Score',
+'Crime Score',
+'Education Skills Score',
+'Health Score',
+'Ofsted Rating'
+)
+
+# Function to check if a variable is numeric
+is_numeric_var <- function(data_intersections, var) {
+  return(is.numeric(data_intersections[[var]]))  # This correctly checks if the column is numeric
+}
+
+# Iterate over variables and create plots
+for (var in color_vars) {
+  if (is.numeric(data_intersections[[var]])) {
+    # Boxplot for numerical variables
+    p <- ggplot(data_intersections, aes(x = intersection_2, y = .data[[var]], fill = intersection_2)) +
+      geom_boxplot() +
+      labs(title = paste('Boxplot of', var, 'by Intersection 2'),
+           x = 'Intersection Status',
+           y = var) +
+      theme_minimal() +
+      #theme(legend.position = 'none') +
+  theme(
+    legend.position = 'none',
+    plot.title = element_text(size = 28, hjust = 0.5),  # Bigger, centered
+    axis.title = element_text(size = 18),
+    axis.text = element_text(size = 18),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10)
+  )
+  } else {
+    # Bar chart for categorical variables
+    p <- ggplot(data_intersections, aes(x = .data[[var]], fill = intersection_2)) +
+      geom_bar(position = 'dodge') +
+      labs(title = paste('Bar Chart of', var, 'by Intersection 2'),
+           x = var,
+           y = 'Count') +
+      theme_minimal() +
+      theme(
+    legend.position = 'none',
+    plot.title = element_text(size = 28, hjust = 0.5),  # Bigger, centered
+    axis.title = element_text(size = 18),
+    axis.text = element_text(size = 18),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10),axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+  }
+  
+  # Print the plot
+  print(p)
+}
+
+
+```
+
+```{r fig.width=12, fig.height=10}
+
+
+p1 <- ggplot(data_intersections, aes(x = intersection_2, y = .data[['Number Of Pupils']], fill = intersection_2)) +
+      geom_boxplot() +
+      labs(title = paste('Boxplot of', 'Number Of Pupils', 'by Intersection 2'),
+           x = 'Intersection Status',
+           y =  'Number Of Pupils') +
+      theme_minimal() +
+      #theme(legend.position = 'none') +
+  theme(
+    legend.position = 'none',
+    plot.title = element_text(size = 28, hjust = 0.5),  # Bigger, centered
+    axis.title = element_text(size = 18),
+    axis.text = element_text(size = 18),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10))
+
+p2 <- ggplot(data_intersections, aes(x = intersection_2, y = .data[['Free School Meals (%)']], fill = intersection_2)) +
+      geom_boxplot() +
+      labs(title = paste('Boxplot of', 'Free School Meals (%)', 'by Intersection 2'),
+           x = 'Intersection Status',
+           y =  'Free School Meals (%)') +
+      theme_minimal() +
+      #theme(legend.position = 'none') +
+  theme(
+    legend.position = 'none',
+    plot.title = element_text(size = 28, hjust = 0.5),  # Bigger, centered
+    axis.title = element_text(size = 18),
+    axis.text = element_text(size = 18),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10))
+    
+p1 / p2
+
+```
+
+
+
+```{r}
+
+data_numeric <- data[,sapply(data, is.numeric)]
+
+TestMCARNormality(data_numeric)
+
+
+```
+
+
+
+
+
+```{r}
+
+
+color_vars <- c('Borough',
+'School Level',
+'School Type',
+'Admissions Type',
+'Gender',
+'Denomination',
+'Number Of Pupils',
+'Number Of Boys',
+'Number Of Girls',
+'Boy To Girl Ratio',
+'Pupils Per Teacher',
+'English Second Language (%)',
+'Free School Meals (%)',
+'Attainment (%)',
+'Absences (%)',
+'Unauthorised Absences (%)',
+'Mean Distance (km)',
+'Income Score',
+'Employment Score',
+'Crime Score',
+'Education Skills Score',
+'Health Score',
+'Ofsted Rating'
+)
+
+
+for (col in color_vars) {
+  if (is.numeric(data[[col]])) {
+    # For numeric variables: make a boxplot
+    p <- ggplot(data, aes_string(x = "''", y = paste0("`", col, "`"))) +
+      geom_boxplot() +
+      coord_flip() +
+      labs(title = paste("Boxplot of", col))
+  } else {
+    # For non-numeric variables: make a bar chart
+    p <- ggplot(data, aes_string(x = paste0("`", col, "`"))) +
+      geom_bar() +
+      coord_flip() +
+      labs(title = paste("Bar Chart of", col))
+  }
+  print(p)
+}
+
+
+```
+
+
+
+```{r}
+
+
+color_vars <- c('Borough',
+'School Level',
+'School Type',
+'Admissions Type',
+'Gender',
+'Denomination',
+'Number Of Pupils',
+'Number Of Boys',
+'Number Of Girls',
+'Boy To Girl Ratio',
+'Pupils Per Teacher',
+'English Second Language (%)',
+'Free School Meals (%)',
+'Attainment (%)',
+'Absences (%)',
+'Unauthorised Absences (%)',
+'Mean Distance (km)',
+'Income Score',
+'Employment Score',
+'Crime Score',
+'Education Skills Score',
+'Health Score',
+'Ofsted Rating'
+)
+
+for (col in color_vars) {
+  if (is.numeric(data[[col]])) {
+    # For numeric variables: make a histogram.
+    p <- ggplot(data, aes_string(x = paste0("`", col, "`"))) +
+      geom_histogram(bins = 20, fill = 'steelblue', color = 'black') +
+      labs(title = paste('Histogram of', col))
+  } else {
+    # For non-numeric variables: make a bar chart.
+    p <- ggplot(data, aes_string(x = paste0("`", col, "`"))) +
+      geom_bar(fill = 'steelblue', color = 'black') +
+      coord_flip() +
+      labs(title = paste('Bar Chart of', col))
+  }
+
+  print(p)
+}
+
+
+```
+
+
+```{r fig.width=17, fig.height=15}
+
+p1 <- ggplot(data, aes_string(x = "''", y = paste0("`", 'Attainment (%)', "`"))) +
+  geom_boxplot() + coord_flip() +
+  labs(x = NULL, title = paste('Boxplot of', 'Attainment (%)')) +
+  theme(
+    legend.position = 'none',
+    plot.title = element_text(size = 28, hjust = 0.5),
+    axis.title = element_text(size = 24),
+    axis.text = element_text(size = 18),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10)
+  )
+
+p2 <- ggplot(data, aes_string(x = "''", y = paste0("`", 'Absences (%)', "`"))) +
+  geom_boxplot() + coord_flip() +
+  labs(x = NULL, title = paste('Boxplot of', 'Absences (%)')) +
+  theme(
+    legend.position = 'none',
+    plot.title = element_text(size = 28, hjust = 0.5),
+    axis.title = element_text(size = 24),
+    axis.text = element_text(size = 18),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10)
+  )
+
+
+p3 <- ggplot(data, aes_string(x = paste0("`", 'Pupils Per Teacher', "`"))) +
+  geom_histogram(bins = 20, fill = 'steelblue', color = 'black') +
+  labs(y = 'Count', title = paste('Histogram of', 'Pupils Per Teacher')) +
+  theme(
+    legend.position = 'none',
+    plot.title = element_text(size = 28, hjust = 0.5),
+    axis.title = element_text(size = 24),
+    axis.text = element_text(size = 18),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10)
+  )
+
+
+
+# Step 1: Count number of schools per borough
+borough_counts <- data %>%
+  count(Borough, name = "School Count")
+
+# Step 2: Create the fourth plot
+p4 <- ggplot(borough_counts, aes(x = '', y = `School Count`)) +
+  geom_boxplot() +
+  coord_flip() +
+  labs(title = "Boxplot of School Count per Borough", x = NULL, y = "Number of Schools") +
+  theme(
+    legend.position = 'none',
+    plot.title = element_text(size = 28, hjust = 0.5),
+    axis.title = element_text(size = 24),
+    axis.text = element_text(size = 18),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10)
+  )
+
+p1 / p2 / p3 / p4
+```
+
+
+
+# Some issues found
+
+# num_pupils is sometimes showing zero
+# num_pupils does not always equal num_boys + num_girls and so a new column is made (done)
+# num_boys and num_girls columns sometimes contradict the gender column (something to note and be aware of)
+# ratio of boys to girls column is misleading and therefore a new columns needs to be made (done)
+# pupils_per_teacher is showing as 0 for some schools (done)
+# pct_attainment is above 100 when we expect this column to range from 0 to 100 (done)
+# pct_absences has huge anomaly of 70 (done)
+# city_of_london we will remove since this borough has only one school and can skew our analyses when comparing between boroughs
+
+
+
+```{r}
+
+data$`Number Of Pupils` <- data$`Number Of Boys` + data$`Number Of Girls`
+
+data$`Boy To Girl Ratio` <- data$`Number Of Boys` / (data$`Number Of Boys` + data$`Number Of Girls`)
+
+data$`Boy To Girl Ratio`[data$`Number Of Boys` == 0 & data$`Number Of Girls` == 0] <- NA
+
+data$`Pupils Per Teacher`[data$`Pupils Per Teacher` == 0] <- NA
+
+data$`Attainment (%)`[data$`Attainment (%)` > 100] <- NA
+
+data[data$`Number Of Pupils` == 0 & data$`Number Of Boys` == 0 & data$`Number Of Girls` == 0, c('Number Of Pupils', 'Number Of Boys', 'Number Of Girls')] <- NA
+
+#data <- data[data$`Absences (%)` <= 0.5,]
+data <- data[data$`Absences (%)` <= 50 | is.na(data$`Absences (%)`), ]
+
+data <- data[data$`Borough` != 'City of London',]
+
+data_intersections <- data
+data_intersections$`Ofsted Rating` <-as.factor(data_intersections$`Ofsted Rating`)
+
+```
+
+
+
+```{r fig.width=25, fig.height=10}
+
+
+color_vars <- c('Borough',
+'School Level',
+#'School Type',
+#'Admissions Type',
+'Gender',
+#'Denomination',
+'Number Of Pupils',
+'Number Of Boys',
+'Number Of Girls',
+'Boy To Girl Ratio',
+'Pupils Per Teacher',
+#'English Second Language (%)',
+'Free School Meals (%)',
+#'Attainment (%)',
+#'Absences (%)',
+#'Unauthorised Absences (%)',
+#'Mean Distance (km)',
+'Income Score',
+'Employment Score',
+'Crime Score',
+'Education Skills Score',
+'Health Score',
+'Ofsted Rating'
+)
+
+# Function to check if a variable is numeric
+is_numeric_var <- function(data_intersections, var) {
+  return(is.numeric(data_intersections[[var]]))  # This correctly checks if the column is numeric
+}
+
+# Iterate over variables and create plots
+for (var in color_vars) {
+  if (is.numeric(data_intersections[[var]])) {
+    # Boxplot for numerical variables
+    p <- ggplot(data_intersections, aes(x = intersection_1, y = .data[[var]], fill = intersection_1)) +
+      geom_boxplot() +
+      labs(title = paste('Boxplot of', var, 'by intersection_1'),
+           x = 'Intersection Status',
+           y = var) +
+      theme_minimal() +
+      theme(legend.position = 'none')
+  } else {
+    # Bar chart for categorical variables
+    p <- ggplot(data_intersections, aes(x = .data[[var]], fill = intersection_1)) +
+      geom_bar(position = 'dodge') +
+      labs(title = paste('Bar Chart of', var, 'by intersection_1'),
+           x = var,
+           y = 'Count') +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  }
+  
+  # Print the plot
+  print(p)
+}
+
+
+```
+
+```{r fig.width=25, fig.height=10}
+
+color_vars <- c('Borough',
+'School Level',
+#'School Type',
+#'Admissions Type',
+'Gender',
+#'Denomination',
+'Number Of Pupils',
+'Number Of Boys',
+'Number Of Girls',
+'Boy To Girl Ratio',
+'Pupils Per Teacher',
+#'English Second Language (%)',
+'Free School Meals (%)',
+#'Attainment (%)',
+#'Absences (%)',
+#'Unauthorised Absences (%)',
+#'Mean Distance (km)',
+'Income Score',
+'Employment Score',
+'Crime Score',
+'Education Skills Score',
+'Health Score',
+'Ofsted Rating'
+)
+
+# Function to check if a variable is numeric
+is_numeric_var <- function(data_intersections, var) {
+  return(is.numeric(data_intersections[[var]]))  # This correctly checks if the column is numeric
+}
+
+# Iterate over variables and create plots
+for (var in color_vars) {
+  if (is.numeric(data_intersections[[var]])) {
+    # Boxplot for numerical variables
+    p <- ggplot(data_intersections, aes(x = intersection_2_and_4, y = .data[[var]], fill = intersection_2_and_4)) +
+      geom_boxplot() +
+      labs(title = paste('Boxplot of', var, 'by intersection_2_and_4'),
+           x = 'Intersection Status',
+           y = var) +
+      theme_minimal() +
+      theme(legend.position = 'none')
+  } else {
+    # Bar chart for categorical variables
+    p <- ggplot(data_intersections, aes(x = .data[[var]], fill = intersection_2_and_4)) +
+      geom_bar(position = 'dodge') +
+      labs(title = paste('Bar Chart of', var, 'by intersection_2_and_4'),
+           x = var,
+           y = 'Count') +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  }
+  
+  # Print the plot
+  print(p)
+}
+
+
+```
+
+
+# Now lets try data imputation using the package MICE
+
+```{r}
+
+
+colSums(is.na(data))
+
+
+```
+
+
+
+```{r fig.width=25, fig.height=10}
+
+# Numeric variables **with missing values** to be imputed
+numeric_vars_to_impute <- c('Attainment (%)', 'Absences (%)', 'English Second Language (%)', 'Unauthorised Absences (%)',
+                            'Mean Distance (km)', 'Number Of Pupils', 'Number Of Boys', 'Number Of Girls',
+                            'Pupils Per Teacher', 'Boy To Girl Ratio')
+
+# Categorical variables **with missing values** to be imputed
+categorical_vars_to_impute <- c('School Type', 'Admissions Type', 'Denomination')
+
+# Additional **numeric** variables to aid imputation
+numeric_vars_auxiliary <- c('Free School Meals (%)', 'Income Score', 'employement_score', 
+                             'Crime Score', 'educational_score', 'Health Score')
+
+# Additional **categorical** variables to aid imputation
+categorical_vars_auxiliary <- c('Borough', 'School Level', 'Gender')
+
+# **Final lists of variables**
+numeric_vars <- c(numeric_vars_to_impute, numeric_vars_auxiliary)
+categorical_vars <- c(categorical_vars_to_impute, categorical_vars_auxiliary)
+data[categorical_vars] <- lapply(data[categorical_vars], as.factor)
+
+method_list <- rep('', ncol(data))  # Start with no imputation
+
+# Assign Methods for Numeric Variables
+method_list[names(data) %in% numeric_vars_to_impute] <- 'pmm'  # Predictive Mean Matching
+
+# Assign Methods for Categorical Variables
+method_list[names(data) %in% categorical_vars_to_impute] <- 'cart'  # Multinomial regression (e.g. polyreg or cart)
+
+# Create Predictor Matrix to Improve Speed & Accuracy
+pred_matrix <- quickpred(data, mincor = 0.3)  # Select meaningful predictors
+
+# Run `mice()` with Optimized Settings
+imputed_data <- mice(data, method = method_list, predictorMatrix = pred_matrix, m = 3)
+
+# Extract Imputed Dataset
+final_data <- complete(imputed_data, 1)
+
+# Replace Imputed Variables in Original Dataset
+data[numeric_vars_to_impute] <- final_data[numeric_vars_to_impute]
+data[categorical_vars_to_impute] <- final_data[categorical_vars_to_impute]
+
+# Check if Missing Values Remain
+colSums(is.na(data))
+
+
+
+```
+
+
+# Check distributions after imputations have completed
+
+
+
+```{r}
+
+
+color_vars <- c('Borough',
+'School Level',
+'School Type',
+'Admissions Type',
+'Gender',
+'Denomination',
+'Number Of Pupils',
+'Number Of Boys',
+'Number Of Girls',
+'Boy To Girl Ratio',
+'Pupils Per Teacher',
+'English Second Language (%)',
+'Free School Meals (%)',
+'Attainment (%)',
+'Absences (%)',
+'Unauthorised Absences (%)',
+'Mean Distance (km)',
+'Income Score',
+'Employment Score',
+'Crime Score',
+'Education Skills Score',
+'Health Score',
+'Ofsted Rating'
+)
+
+
+for (col in color_vars) {
+  if (is.numeric(data[[col]])) {
+    # For numeric variables: make a boxplot.
+    p <- ggplot(data, aes_string(x = "''", y = paste0("`", col, "`"))) +
+      geom_boxplot() +
+      coord_flip() +
+      labs(title = paste('Boxplot of', col))
+  } else {
+    # For non-numeric variables: make a bar chart.
+    p <- ggplot(data, aes_string(x = paste0("`", col, "`"))) +
+      geom_bar() +
+      coord_flip() +
+      labs(title = paste('Bar Chart of', col))
+  }
+
+  print(p)
+}
+
+
+
+```
+```{r}
+
+colSums(is.na(data))
+```
+
+
+
+
+```{r}
+
+
+color_vars <- c('Borough',
+'School Level',
+'School Type',
+'Admissions Type',
+'Gender',
+'Denomination',
+'Number Of Pupils',
+'Number Of Boys',
+'Number Of Girls',
+'Boy To Girl Ratio',
+'Pupils Per Teacher',
+'English Second Language (%)',
+'Free School Meals (%)',
+'Attainment (%)',
+'Absences (%)',
+'Unauthorised Absences (%)',
+'Mean Distance (km)',
+'Income Score',
+'Employment Score',
+'Crime Score',
+'Education Skills Score',
+'Health Score',
+'Ofsted Rating'
+)
+for (col in color_vars) {
+  if (is.numeric(data[[col]])) {
+    # For numeric variables: make a histogram.
+    p <- ggplot(data, aes_string(x = paste0("`", col, "`"))) +
+      geom_histogram(bins = 20, fill = 'steelblue', color = 'black') +
+      labs(title = paste('Histogram of', col))
+  } else {
+    # For non-numeric variables: make a bar chart.
+    p <- ggplot(data, aes_string(x = paste0("`", col, "`"))) +
+      geom_bar(fill = 'steelblue', color = 'black') +
+      coord_flip() +
+      labs(title = paste('Bar Chart of', col))
+  }
+
+  print(p)
+}
+
+
+```
+
+
+# A brief exploratory analysis of any spatial information in the data
+
+```{r}
+
+df_counts <- data %>%
+  count(Borough)  # Creates columns: borough, n
+
+shapefile_path <- 'ESRI/London_Borough_Excluding_MHW.shp'
+
+london_boroughs <- st_read(shapefile_path)
+
+merged_boroughs <- left_join(
+  london_boroughs,  # polygons
+  df_counts,        # counts
+  by = c('NAME' = 'Borough')  # match columns
+)
+
+```
+
+```{r fig.width=14, fig.height=10}
+
+# Calculate average Ofsted rating
+df_avg <- data %>%
+  group_by(Borough) %>%
+  summarize(avg_ofsted = round(mean(`Ofsted Rating`, na.rm = TRUE), 2))
+
+# Load shapefile
+shapefile_path <- 'ESRI/London_Borough_Excluding_MHW.shp'
+london_boroughs <- st_read(shapefile_path)
+
+# Merge with Ofsted data
+merged_boroughs <- left_join(
+  london_boroughs,
+  df_avg,
+  by = c('NAME' = 'Borough')
+)
+
+# Get label positions using st_centroid() for borough centers
+label_coords <- st_centroid(merged_boroughs) %>%
+  cbind(st_coordinates(.))  # add X/Y columns
+
+# Plot
+p1 <- ggplot(merged_boroughs) +
+  geom_sf(aes(fill = avg_ofsted)) +
+
+  # Use repel for labels to avoid overlaps
+  geom_label_repel(
+  data = label_coords,
+  aes(x = X, y = Y, label = NAME),
+  size = 4,
+  fill = 'black',       # Background color
+  color = 'white',      # Text color
+  label.size = 0.2,     # Border thickness
+  box.padding = 0.5,
+  max.overlaps = Inf
+)+
+
+  scale_fill_viridis_c(option = 'plasma', direction = -1, name = 'Average Ofsted Rating') +
+  labs(
+    fill = 'avg_ofsted',
+    x = 'Longitude (°)',
+    y = 'Latitude (°)',
+    title = 'Average Ofsted Rating by London Boroughs'
+  ) +
+  theme(
+    legend.title = element_text(size = 20),
+    legend.text = element_text(size = 17),
+    plot.title = element_text(size = 35, hjust = 0.5),
+    axis.title = element_text(size = 26),
+    axis.text = element_text(size = 25),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10)
+  )
+
+p1
+```
+
+
+```{r fig.width=14, fig.height=10}
+
+p2 <- ggplot(df_avg, aes(x = reorder(Borough, avg_ofsted), y = avg_ofsted, fill = avg_ofsted)) +
+  geom_col() +
+  geom_text(
+    aes(label = avg_ofsted),
+    hjust = -0.1  # Adjust this as needed to place labels neatly
+  ) +  coord_flip() +
+    scale_fill_viridis_c(option = 'plasma',direction = -1, name = 'Average Ofsted Rating') +
+  labs(
+    x = 'Borough',
+    y = 'Ofsted Ratings',
+    title = 'London Boroughs by Average Ofsted Ratings'
+  )+theme(
+    legend.title = element_text(size = 20),
+    legend.text = element_text(size = 15),
+    plot.title = element_text(size = 35, hjust = 0.5),
+    axis.title = element_text(size = 26),
+    axis.text = element_text(size = 20),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10)
+  )
+
+p2
+
+```
+
+
+```{r fig.width=25, fig.height=10}
+
+# ----------------------------
+# Left Plot: Numeric Treatment
+# ----------------------------
+
+# Compute the average ofsted per borough (numeric)
+df_avg <- data %>%
+  group_by(Borough) %>%
+  summarize(avg_ofsted = round(mean(`Ofsted Rating`, na.rm = TRUE), 3))
+
+# Read the shapefile for London borough boundaries
+shapefile_path <- 'ESRI/London_Borough_Excluding_MHW.shp'
+london_boroughs <- st_read(shapefile_path)
+
+# Merge the aggregated averages with the borough polygons using a join
+merged_boroughs <- left_join(
+  london_boroughs,  # polygons
+  df_avg,           # aggregated numeric averages
+  by = c('NAME' = 'Borough')  # matching column names
+)
+
+# Create the map plot (p1): polygons colored by the average (numeric) ofsted
+p1 <- ggplot(merged_boroughs) +
+  geom_sf(aes(fill = avg_ofsted)) +
+  geom_sf_text(aes(label = paste0(NAME)), size = 4, color = 'white') +
+  scale_fill_viridis_c(option = 'plasma', direction = -1, name = 'avg_ofsted') +
+  labs(
+    x = 'Longitude',
+    y = 'Latitude',
+    title = 'London Boroughs by avg_ofsted'
+  )
+
+# -------------------------------
+# Right Plot: Categorical Treatment
+# -------------------------------
+
+# Convert ofsted to a factor and compute counts for each category by borough
+df_ofsted_counts <- data %>%
+  mutate(ofsted = as.factor(`Ofsted Rating`)) %>%
+  group_by(Borough, ofsted) %>%
+  tally() %>%
+  ungroup()
+
+# Create a horizontal stacked bar chart showing the distribution of ofsted categories per borough.
+p2 <- ggplot(df_ofsted_counts, aes(x = reorder(Borough, -n), y = n, fill = ofsted)) +
+  geom_bar(stat = 'identity', position = 'stack') +
+  coord_flip() +
+  labs(
+    x = 'Borough',
+    y = 'Count',
+    title = 'Distribution of Ofsted by Borough',
+    fill = 'Ofsted Rating'
+  )
+
+# Arrange the two plots side-by-side
+grid.arrange(p1, p2, ncol = 2)
+
+
+
+
+```
+
+
+```{r fig.width=25, fig.height=10}
+# Read the shapefile for London borough boundaries
+shapefile_path <- 'ESRI/London_Borough_Excluding_MHW.shp'
+london_boroughs <- st_read(shapefile_path)
+
+# Define a simple Mode function for categorical variables
+Mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+# List of variables to iterate over
+color_vars <- c('School Level',
+                'School Type',
+                'Admissions Type',
+                'Gender',
+                'Denomination',
+                'Number Of Pupils',
+                'Number Of Boys',
+                'Number Of Girls',
+                'Boy To Girl Ratio',
+                'Pupils Per Teacher',
+                'English Second Language (%)',
+                'Free School Meals (%)',
+                'Attainment (%)',
+                'Absences (%)',
+                'Unauthorised Absences (%)',
+                'Mean Distance (km)',
+                'Income Score',
+                'Employment Score',
+                'Crime Score',
+                'Education Skills Score',
+                'Health Score',
+                'Ofsted Rating')
+
+for (var in color_vars) {
+  
+  if (is.numeric(data[[var]])) {
+    # ---------------------------
+    # Numeric variable processing
+    # ---------------------------
+    # Compute the average of the variable per borough.
+    df_agg <- data %>%
+      group_by(Borough) %>%
+      summarize(avg_value = round(mean(.data[[var]], na.rm = TRUE), 3))
+    
+    # Merge the aggregated averages with the shapefile polygons.
+    merged_boroughs <- left_join(london_boroughs, df_agg, by = c('NAME' = 'Borough'))
+    
+    # Map plot (p1): polygons colored by average value.
+    p1 <- ggplot(merged_boroughs) +
+      geom_sf(aes(fill = avg_value)) +
+      geom_sf_text(aes(label = NAME), size = 4, color = 'white') +
+      scale_fill_viridis_c(option = 'plasma', direction = -1, 
+                           name = paste('Avg', var)) +
+      labs(x = 'Longitude', y = 'Latitude',
+           title = paste('London Boroughs by Average', var))
+    
+    # For the box plot, join the averages back into the raw data.
+    data_box <- left_join(data, df_agg, by = 'Borough')
+    
+    # Boxplot (p2): distribution of the numeric variable by borough.
+    p2 <- ggplot(data_box, aes(x = reorder(Borough, avg_value), 
+                               y = .data[[var]], fill = avg_value)) +
+      geom_boxplot() +
+      coord_flip() +
+      scale_fill_viridis_c(option = 'plasma', direction = -1, 
+                           name = paste(var)) +
+      labs(x = 'Borough', y = var,
+           title = paste(var, 'Distribution by Borough'))
+    
+  } else {
+    # ------------------------------
+    # Categorical variable processing
+    # ------------------------------
+    # Compute the mode for the categorical variable per borough.
+    df_agg <- data %>%
+      group_by(Borough) %>%
+      summarize(mode_value = Mode(.data[[var]]))
+    
+    # Merge the mode data with the shapefile polygons.
+    merged_boroughs <- left_join(london_boroughs, df_agg, by = c('NAME' = 'Borough'))
+    
+    # Map plot (p1): polygons colored by the mode value.
+    p1 <- ggplot(merged_boroughs) +
+      geom_sf(aes(fill = mode_value)) +
+      geom_sf_text(aes(label = NAME), size = 4, color = 'white') +
+      labs(x = 'Longitude', y = 'Latitude',
+           title = paste('London Boroughs by Mode', var)) +
+      scale_fill_brewer(palette = 'Set1', name = paste('Mode', var))
+    
+    # For the bar chart (p2), compute counts for each category within each borough.
+    df_counts <- data %>%
+      group_by(Borough, category = .data[[var]]) %>%
+      tally() %>%
+      ungroup()
+    
+    # Horizontal stacked bar chart: distribution of the categorical variable.
+    p2 <- ggplot(df_counts, aes(x = reorder(Borough, -n), y = n, fill = category)) +
+      geom_bar(stat = 'identity', position = 'stack') +
+      coord_flip() +
+      labs(x = 'Borough', y = 'Count',
+           title = paste('Distribution of', var, 'by Borough'),
+           fill = var)
+  }
+  
+  # Arrange the two plots side by side.
+  grid.arrange(p1, p2, ncol = 2)
+}
+
+
+
+
+```
+
+
+
+
+```{r fig.width=14, fig.height=10}
+
+color_vars <- c('School Level',
+                'School Type',
+                'Admissions Type',
+                'Gender',
+                'Denomination',
+                'Number Of Pupils',
+                'Number Of Boys',
+                'Number Of Girls',
+                'Boy To Girl Ratio',
+                'Pupils Per Teacher',
+                'English Second Language (%)',
+                'Free School Meals (%)',
+                'Attainment (%)',
+                'Absences (%)',
+                'Unauthorised Absences (%)',
+                'Mean Distance (km)',
+                'Income Score',
+                'Employment Score',
+                'Crime Score',
+                'Education Skills Score',
+                'Health Score',
+                'Ofsted Rating')
+
+for (col_var in color_vars) {
+  # Base map (no color in global aes)
+  p <- ggplot(data, aes(x = Longitude, y = Latitude)) +
+    
+    # Scatter points colored by col_var
+    geom_point(aes_string(color = paste0("`", col_var, "`")), size = 2.5) +
+
+    # Global density contours (not grouped)
+    geom_density_2d(color = "grey30", linewidth = 1, alpha = 0.4) +
+
+    # Coordinate limits for London area
+    scale_x_continuous(limits = c(-0.5, 0.3)) +
+    scale_y_continuous(limits = c(51.3, 51.7)) +
+
+    # Labels
+    labs(
+      x = 'Longitude (°)',
+      y = 'Latitude (°)',
+      color = col_var,
+      title = paste('Geospatial Plot of Schools by', col_var)
+    ) +
+
+    # Styling
+    theme(
+      legend.title = element_text(size = 25),
+      legend.text = element_text(size = 20),
+      plot.title = element_text(size = 35, hjust = 0.5),
+      axis.title = element_text(size = 26),
+      axis.text = element_text(size = 25),
+      plot.margin = margin(t = 20, r = 10, b = 20, l = 10)
+    )
+
+  # Conditional color scale
+  if (is.numeric(data[[col_var]])) {
+    p <- p + scale_color_gradient(low = 'red', high = 'blue')
+  } else {
+    p <- p + scale_color_brewer(palette = 'Set1')
+  }
+
+  print(p)
+}
+
+
+```
+
+
+```{r}
+
+
+for (i in c(1:4)){
+
+  data_ofsted <- data[data$`Ofsted Rating` == i,]
+
+  p <- ggplot(data_ofsted, aes_string(x = 'Longitude', y = 'Latitude', color = paste0("`", col_var, "`"))) +
+  geom_point() +
+  scale_x_continuous(limits = c(-0.5, 0.3)) +
+  scale_y_continuous(limits = c(51.3, 51.7)) +
+  labs(x = 'Longitude (°)', y = 'Latitude (°)',color = col_var, title = paste('Map of lon vs. lat by', paste0("`", col_var, "`")))
+  
+  p <- p + scale_color_gradient(low = 'red', high = 'blue')
+  
+  print(p)
+}
+ 
+```
+```{r fig.width=12, fig.height=8}
+
+ggplot(data, aes(x = Longitude, y = Latitude)) +
+  geom_point(alpha = 0.4, color = "blue", size = 1.5) +
+  stat_density_2d(aes(fill = after_stat(level)), geom = "polygon", alpha = 0.5) +
+  scale_fill_viridis_c() +
+  coord_fixed() +
+  labs(
+    title = "School Density Heat Map - London",
+    x = "Longitude", y = "Latitude"
+  ) +
+  theme_minimal(base_size = 16)
+
+
+```
+
+
+# Any clustering behaviour present in the numeric attributes data, and whether any such clusters can be linked to other variables in the dataset
+
+
+```{r fig.width=12, fig.height=8}
+
+ggpairs_data <- data %>%
+  select(`Number Of Pupils`,
+         `Boy To Girl Ratio`,
+         `Pupils Per Teacher`, 
+         `English Second Language (%)`,
+         `Free School Meals (%)`,
+         `Attainment (%)`,
+         `Absences (%)`,
+         `Unauthorised Absences (%)`,
+         `Income Score`,
+         `Employment Score`,
+         `Crime Score`,
+         `Education Skills Score`,
+         `Health Score`
+         )
+
+```
+
+
+```{r fig.width=20, fig.height=10}
+
+ggpairs(data = ggpairs_data,
+        #mapping = aes(colour=ofsted),
+        progress = FALSE, # suppress verbose progress bar output
+        lower = list(combo = wrap('facethist', bins=20))
+        )
+
+```
+
+
+```{r fig.width=20, fig.height=10}
+
+ggpairs(data = ggpairs_data,
+        progress = FALSE,
+        lower = list(continuous = 'density')
+        )
+```
+
+```{r fig.width=17, fig.height=10}
+# Get column names
+vars <- colnames(ggpairs_data)
+
+# Create all unique pairs
+for (i in 1:(length(vars)-1)) {
+  for (j in (i+1):length(vars)) {
+    
+    x_var <- vars[i]
+    y_var <- vars[j]
+
+    p <- ggplot(ggpairs_data, aes_string(x = paste0("`", x_var, "`"), 
+                                         y = paste0("`", y_var, "`"))) +
+      stat_density_2d_filled(
+        aes(fill = after_stat(level)),
+        contour_var = 'density', bins = 10
+      ) +
+      ggtitle(paste('Density Plot of', x_var, 'vs', y_var)) +
+      theme(
+        legend.position = 'none',
+        plot.title = element_text(size = 35, hjust = 0.5),
+        axis.title = element_text(size = 26),
+        axis.text = element_text(size = 25),
+        plot.margin = margin(t = 20, r = 10, b = 20, l = 10)
+      )
+
+    print(p)
+
+    # Optional saving:
+    # ggsave(paste0('density_', x_var, '_vs_', y_var, '.png'), plot = p, width = 8, height = 6)
+  }
+}
+
+
+```
+
+```{r fig.width=20, fig.height=10}
+
+# Calculate centroids
+centroids <- data %>%
+  group_by(`School Type`) %>%
+  summarise(
+    `Number Of Pupils` = mean(`Number Of Pupils`, na.rm = TRUE),
+    `English Second Language (%)` = mean(`English Second Language (%)`, na.rm = TRUE)
+  )
+
+# Plot
+p <- ggplot(data, aes(x = `Number Of Pupils`, y = `English Second Language (%)`)) +
+  # Points coloured by School Type
+  geom_point(aes(colour = `School Type`), alpha = 0.7, size = 2.5) +
+
+  # Density over all data (not grouped)
+  geom_density_2d(colour = "grey30", alpha = 0.5,linewidth = 1) +
+
+  # Centroid diamonds (filled by School Type, black outline)
+  geom_point(data = centroids,
+             aes(x = `Number Of Pupils`, y = `English Second Language (%)`, fill = `School Type`),
+             colour = 'black', shape = 23, size = 6, stroke = 1.2,
+             inherit.aes = FALSE) +
+
+  # Centroid labels
+  geom_label_repel(data = centroids,
+                   aes(x = `Number Of Pupils`, y = `English Second Language (%)`, label = `School Type`),
+                   inherit.aes = FALSE, size = 5, alpha = 0.85,
+                   label.size = 0.2, box.padding = 0.5, max.overlaps = Inf) +
+
+  # Remove duplicate colour legend for points
+  guides(colour = 'none') +
+
+  # Keep legend for centroid fill
+  scale_fill_discrete(name = 'School Type') +
+
+  ggtitle('Scatter Plot of Number of Pupils vs English Second Language (%)') +
+  xlab('Number of Pupils') +
+  ylab('English Second Language (%)') +
+  theme(
+    legend.title = element_text(size = 25),
+    legend.text = element_text(size = 20),
+    plot.title = element_text(size = 35, hjust = 0.5),
+    axis.title = element_text(size = 26),
+    axis.text = element_text(size = 25),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10)
+  )
+
+print(p)
+
+
+
+```
+
+
+```{r fig.width=20, fig.height=10}
+
+# Calculate centroids
+centroids <- data %>%
+  group_by(`School Level`) %>%
+  summarise(
+    `Number Of Pupils` = mean(`Number Of Pupils`, na.rm = TRUE),
+    `English Second Language (%)` = mean(`English Second Language (%)`, na.rm = TRUE)
+  )
+
+# Plot
+p <- ggplot(data, aes(x = `Number Of Pupils`, y = `English Second Language (%)`)) +
+  # Colour only the points by School Level
+  geom_point(aes(colour = `School Level`), alpha = 0.7, size = 2.5) +
+
+  # Density across all points (not grouped)
+  geom_density_2d(colour = "grey30", alpha = 0.5,linewidth = 1) +
+
+  # Centroid diamonds
+  geom_point(data = centroids,
+             aes(x = `Number Of Pupils`, y = `English Second Language (%)`, fill = `School Level`),
+             colour = 'black', shape = 23, size = 6, stroke = 1.2,
+             inherit.aes = FALSE) +
+
+  # Repelled centroid labels
+  geom_label_repel(data = centroids,
+                   aes(x = `Number Of Pupils`, y = `English Second Language (%)`, label = `School Level`),
+                   inherit.aes = FALSE, size = 5, alpha = 0.85,
+                   label.size = 0.2, box.padding = 0.5, max.overlaps = Inf) +
+
+  # Remove point legend
+  guides(colour = 'none') +
+
+  # Keep diamond (fill) legend
+  scale_fill_discrete(name = 'School Level') +
+
+  ggtitle('Scatter Plot of Number of Pupils vs English Second Language (%)') +
+  xlab('Number of Pupils') +
+  ylab('English Second Language (%)') +
+  theme(
+    legend.title = element_text(size = 25),
+    legend.text = element_text(size = 20),
+    plot.title = element_text(size = 35, hjust = 0.5),
+    axis.title = element_text(size = 26),
+    axis.text = element_text(size = 25),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10)
+  )
+
+print(p)
+
+
+```
+
+```{r fig.width=17, fig.height=10}
+
+# Calculate centroids
+centroids <- data %>%
+  group_by(`School Type`) %>%
+  summarise(
+    `Number Of Pupils` = mean(`Number Of Pupils`, na.rm = TRUE),
+    `Crime Score` = mean(`Crime Score`, na.rm = TRUE)
+  )
+
+# Plot
+p <- ggplot(data, aes(x = `Number Of Pupils`, y = `Crime Score`)) +
+  # Colour the points by School Type
+  geom_point(aes(colour = `School Type`), alpha = 0.7, size = 2.5) +
+
+  # Density contours over the entire dataset (no grouping)
+  geom_density_2d(colour = "grey30", alpha = 0.5,linewidth = 1) +
+
+  # Centroid diamonds (fill by School Type, black outline)
+  geom_point(data = centroids,
+             aes(x = `Number Of Pupils`, y = `Crime Score`, fill = `School Type`),
+             colour = 'black', shape = 23, size = 6, stroke = 1.2,
+             inherit.aes = FALSE) +
+
+  # Non-overlapping centroid labels
+  geom_label_repel(data = centroids,
+                   aes(x = `Number Of Pupils`, y = `Crime Score`, label = `School Type`),
+                   inherit.aes = FALSE, size = 5, alpha = 0.85,
+                   label.size = 0.2, box.padding = 0.5, max.overlaps = Inf) +
+
+  # Remove duplicate colour legend
+  guides(colour = 'none') +
+
+  # Keep fill legend
+  scale_fill_discrete(name = 'School Type') +
+
+  ggtitle('Scatter Plot of Number of Pupils vs Crime Score') +
+  xlab('Number of Pupils') +
+  ylab('Crime Score') +
+  theme(
+    legend.title = element_text(size = 25),
+    legend.text = element_text(size = 20),
+    plot.title = element_text(size = 35, hjust = 0.5),
+    axis.title = element_text(size = 26),
+    axis.text = element_text(size = 25),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10)
+  )
+
+print(p)
+
+
+
+```
+
+
+```{r fig.width=17, fig.height=10}
+
+# Calculate centroids
+centroids <- data %>%
+  group_by(`School Level`) %>%
+  summarise(
+    `Number Of Pupils` = mean(`Number Of Pupils`, na.rm = TRUE),
+    `Crime Score` = mean(`Crime Score`, na.rm = TRUE)
+  )
+
+# Plot
+p <- ggplot(data, aes(x = `Number Of Pupils`, y = `Crime Score`)) +
+  # Apply colour only to points
+  geom_point(aes(colour = `School Level`), alpha = 0.7, size = 2.5) +
+
+  # Global density line (all points, ungrouped)
+  geom_density_2d(colour = "grey30", alpha = 0.5,linewidth = 1) +
+
+  # Centroid diamonds (group color fill, black outline)
+  geom_point(data = centroids,
+             aes(x = `Number Of Pupils`, y = `Crime Score`, fill = `School Level`),
+             colour = 'black', shape = 23, size = 6, stroke = 1.2,
+             inherit.aes = FALSE) +
+
+  # Centroid labels
+  geom_label_repel(data = centroids,
+                   aes(x = `Number Of Pupils`, y = `Crime Score`, label = `School Level`),
+                   inherit.aes = FALSE, size = 5, alpha = 0.85,
+                   label.size = 0.2, box.padding = 0.5, max.overlaps = Inf) +
+
+  # Remove duplicate legend for points
+  guides(colour = 'none') +
+
+  # Keep fill legend for diamonds
+  scale_fill_discrete(name = 'School Level') +
+
+  ggtitle('Scatter Plot of Number of Pupils vs Crime Score') +
+  xlab('Number of Pupils') +
+  ylab('Crime Score') +
+  theme(
+    legend.title = element_text(size = 25),
+    legend.text = element_text(size = 20),
+    plot.title = element_text(size = 35, hjust = 0.5),
+    axis.title = element_text(size = 26),
+    axis.text = element_text(size = 25),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10)
+  )
+
+print(p)
+
+
+```
+
+
+```{r fig.width=20, fig.height=10}
+
+# Calculate centroids with ESL on x-axis and income_score on y-axis
+centroids <- data %>%
+  group_by(`School Level`) %>%
+  summarise(
+    `English Second Language (%)` = mean(`English Second Language (%)`, na.rm = TRUE),
+    `Income Score` = mean(`Income Score`, na.rm = TRUE)
+  )
+
+# Plot
+p <- ggplot(data, aes(x = `English Second Language (%)`, y = `Income Score`)) +
+  # Colour points by School Level
+  geom_point(aes(colour = `School Level`), alpha = 0.7, size = 2.5) +
+
+  # Density for all data (no grouping)
+  geom_density_2d(colour = "grey30", alpha = 0.5,linewidth = 1) +
+
+  # Centroid diamonds with black outline
+  geom_point(data = centroids,
+             aes(x = `English Second Language (%)`, y = `Income Score`, fill = `School Level`),
+             colour = 'black', shape = 23, size = 6, stroke = 1.2,
+             inherit.aes = FALSE) +
+
+  # Repelled labels
+  geom_label_repel(data = centroids,
+                   aes(x = `English Second Language (%)`, y = `Income Score`, label = `School Level`),
+                   size = 5, alpha = 0.85, label.size = 0.2,
+                   max.overlaps = Inf, box.padding = 0.5,
+                   inherit.aes = FALSE) +
+
+  # Remove duplicate colour legend (for points)
+  guides(colour = 'none') +
+
+  ggtitle('Scatter Plot: English Second Language (%) vs Income Score') +
+  xlab('English Second Language (%)') +
+  ylab('Income Score') +
+  theme(
+    legend.title = element_text(size = 25),
+    legend.text = element_text(size = 20),
+    plot.title = element_text(size = 35, hjust = 0.5),
+    axis.title = element_text(size = 26),
+    axis.text = element_text(size = 25),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10)
+  )
+
+print(p)
+
+
+
+```
+
+
+```{r fig.width=20, fig.height=10}
+
+# Calculate centroids with ESL on x-axis and income_score on y-axis
+centroids <- data %>%
+  group_by(`School Type`) %>%
+  summarise(
+    `English Second Language (%)` = mean(`English Second Language (%)`, na.rm = TRUE),
+    `Income Score` = mean(`Income Score`, na.rm = TRUE)
+  )
+
+# Plot
+p <- ggplot(data, aes(x = `English Second Language (%)`, y = `Income Score`)) +
+  # Points colored by school type
+  geom_point(aes(colour = `School Type`), alpha = 0.7, size = 2.5) +
+  
+  # Density contour for all points (not by group)
+  geom_density_2d(colour = "grey30", alpha = 0.5,linewidth = 1) +
+
+  # Centroid diamonds
+  geom_point(data = centroids,
+             aes(x = `English Second Language (%)`, y = `Income Score`, fill = `School Type`),
+             colour = 'black', shape = 23, size = 6, stroke = 1.2,
+             inherit.aes = FALSE) +
+
+  # Repelled centroid labels
+  geom_label_repel(data = centroids,
+                   aes(x = `English Second Language (%)`, y = `Income Score`, label = `School Type`),
+                   size = 5, alpha = 0.85, label.size = 0.2,
+                   max.overlaps = Inf, box.padding = 0.5,
+                   inherit.aes = FALSE) +
+
+  # Remove duplicate legend
+  guides(colour = 'none') +
+
+  ggtitle('Scatter Plot of English Second Language (%) vs Income Score') +
+  xlab('English Second Language (%)') +
+  ylab('Income Score') +
+  theme(
+    legend.title = element_text(size = 25),
+    legend.text = element_text(size = 20),
+    plot.title = element_text(size = 35, hjust = 0.5),
+    axis.title = element_text(size = 26),
+    axis.text = element_text(size = 25),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10)
+  )
+
+print(p)
+
+
+```
+
+```{r fig.width=20, fig.height=10}
+
+# Calculate centroids
+centroids <- data %>%
+  group_by(`School Level`) %>%
+  summarise(
+    `Income Score` = mean(`Income Score`, na.rm = TRUE),
+    `Employment Score` = mean(`Employment Score`, na.rm = TRUE)
+  )
+
+# Scatter plot with density for all data (not grouped)
+p <- ggplot(data, aes(x = `Income Score`, y = `Employment Score`)) +
+  geom_point(aes(colour = `School Level`), alpha = 0.7, size = 2.5) +   # Colour only here
+  geom_density_2d(colour = "grey30", alpha = 0.5,linewidth = 1) +
+
+  # Centroid diamonds (fill by School Level, black outline)
+  geom_point(data = centroids,
+             aes(x = `Income Score`, y = `Employment Score`, fill = `School Level`),
+             colour = 'black', shape = 23, size = 6, stroke = 1.2,
+             inherit.aes = FALSE) +
+
+  # Repelled labels
+  geom_label_repel(data = centroids,
+                   aes(x = `Income Score`, y = `Employment Score`, label = `School Level`),
+                   size = 5, alpha = 0.85, label.size = 0.2,
+                   max.overlaps = Inf, box.padding = 0.5,
+                   inherit.aes = FALSE) +
+
+  # Remove duplicate legend
+  guides(colour = 'none') +
+
+  ggtitle('Scatter Plot: Income Score vs Employment Score') +
+  xlab('Income Score') +
+  ylab('Employment Score') +
+  theme(
+    legend.title = element_text(size = 25),
+    legend.text = element_text(size = 20),
+    plot.title = element_text(size = 35, hjust = 0.5),
+    axis.title = element_text(size = 26),
+    axis.text = element_text(size = 25),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10)
+  )
+
+print(p)
+
+
+```
+
+
+
+
+```{r fig.width=20, fig.height=10}
+
+data_ofsted_scatter <- data
+
+data_ofsted_scatter$`Ofsted Rating` <- as.factor(data_ofsted_scatter$`Ofsted Rating`)
+
+# Assuming 'vars' is defined and data_ofsted_scatter exists
+
+for (i in 1:(length(vars)-1)) {
+  for (j in (i+1):length(vars)) {
+
+    x_var <- vars[i]
+    y_var <- vars[j]
+
+    # Calculate centroids
+    centroids <- data_ofsted_scatter %>%
+      group_by(`Ofsted Rating`) %>%
+      summarise(
+        x = mean(.data[[x_var]], na.rm = TRUE),
+        y = mean(.data[[y_var]], na.rm = TRUE)
+      )
+
+    # Rename for plotting
+    colnames(centroids)[colnames(centroids) == "x"] <- x_var
+    colnames(centroids)[colnames(centroids) == "y"] <- y_var
+
+    # Plot
+    p <- ggplot(data_ofsted_scatter, aes(x = .data[[x_var]], y = .data[[y_var]])) +
+      geom_point(aes(colour = `Ofsted Rating`), alpha = 0.7, size = 2.5) +
+      geom_density_2d(colour = "grey30", alpha = 0.5, linewidth = 1) +
+
+      # Centroid diamonds
+      geom_point(data = centroids,
+                 aes(x = .data[[x_var]], y = .data[[y_var]], fill = `Ofsted Rating`),
+                 colour = 'black', shape = 23, size = 6, stroke = 1.2,
+                 inherit.aes = FALSE) +
+
+      # Centroid labels
+      geom_label_repel(data = centroids,
+                       aes(x = .data[[x_var]], y = .data[[y_var]], label = `Ofsted Rating`),
+                       size = 5, alpha = 0.85, label.size = 0.2,
+                       max.overlaps = Inf, box.padding = 0.5,
+                       inherit.aes = FALSE) +
+
+      guides(colour = 'none') +
+
+      ggtitle(paste('Scatter Plot:', x_var, "vs", y_var)) +
+      xlab(x_var) +
+      ylab(y_var) +
+      theme(
+        legend.title = element_text(size = 25),
+        legend.text = element_text(size = 20),
+        plot.title = element_text(size = 35, hjust = 0.5),
+        axis.title = element_text(size = 26),
+        axis.text = element_text(size = 25),
+        plot.margin = margin(t = 20, r = 10, b = 20, l = 10)
+      )
+
+    print(p)
+  }
+}
+
+```
+
+
+# Whether dimension reduction can aid the discovery of any clusters
+
+```{r fig.width=17, fig.height=10}
+
+ggpairs_data_na_omitted <- na.omit(ggpairs_data)
+
+data_pca <- prcomp(ggpairs_data_na_omitted, center = TRUE, scale. = TRUE)
+
+pc1 <- data_pca$x[,1]
+pc2 <- data_pca$x[,2]
+
+pc_df <- data.frame(pc1,pc2)
+
+cumsum_evalues <- cumsum(data_pca$sdev^2)
+sum_evalues <- sum(data_pca$sdev^2)
+
+cat('Cumulative variance across top k PCs, for k=1,...,4:',cumsum_evalues,'\n')
+
+
+var_prop <- (cumsum_evalues / sum_evalues)[1:6]
+df_variances <- data.frame(index = 1:6, var_prop = var_prop)
+
+ggplot(data = df_variances, aes(x = index, y = var_prop)) +
+  geom_line(size = 1.2, color = 'blue') +
+  geom_point(size = 3, color = 'red') +
+  geom_text(aes(label = sprintf('%.2f', var_prop)), 
+            vjust = -1, size = 6) +
+  ylim(c(0, 1)) +
+  ggtitle('Proportion of Variance explained by top k Principal Components') +
+  ylab('Proportion of Variance') + 
+  xlab('Number of Principal Components (k)') + 
+  theme_light() +
+  theme(
+    legend.title = element_text(size = 25),
+    legend.text = element_text(size = 20),
+    plot.title = element_text(size = 35, hjust = 0.55),
+    axis.title = element_text(size = 26),
+    axis.text = element_text(size = 25),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10)
+  )
+
+
+ggplot(pc_df, aes(x=pc1,y=pc2)) +
+  geom_point() +
+  geom_density_2d(colour = "blue", alpha = 0.7,linewidth = 0.5) +
+  labs(title='Projection of School Observations onto First Two Principal Components')+
+    xlab('Principal Component 1') + ylab('Principal Component 2')+
+  theme(
+    legend.title = element_text(size = 25),
+    legend.text = element_text(size = 20),
+    plot.title = element_text(size = 35, hjust = 0.5),  # Bigger, centered
+    axis.title = element_text(size = 26),
+    axis.text = element_text(size = 25),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10))
+
+
+```
+
+```{r}
+
+plot(data_pca, type = 'l', main = 'Scree Plot')+
+  theme(
+    legend.title = element_text(size = 25),
+    legend.text = element_text(size = 20),
+    plot.title = element_text(size = 35, hjust = 0.5),  # Bigger, centered
+    axis.title = element_text(size = 26),
+    axis.text = element_text(size = 25),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10))
+
+```
+
+
+```{r fig.width=17, fig.height=10}
+
+data_pca_km2 <- kmeans(data_pca$x[,1:2], centers=3)
+
+pc_km_df <- bind_cols(pc_df,cluster=as.factor(data_pca_km2$cluster))
+
+ggplot(pc_km_df, aes(x=pc1,y=pc2)) +
+  geom_point(mapping = aes(colour=cluster)) +
+  geom_density_2d(alpha=0.7) + 
+  xlab('Principal Component 1') + ylab('Principal Component 2')+
+  theme(
+    legend.title = element_text(size = 25),
+    legend.text = element_text(size = 20),
+    plot.title = element_text(size = 35, hjust = 0.5),  # Bigger, centered
+    axis.title = element_text(size = 26),
+    axis.text = element_text(size = 25),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10))+
+    ggtitle('First Two Principal Components and K-Means Clustering (K=3)')
+
+
+```
+
+
+
+```{r fig.width=17, fig.height=10}
+
+pc_km_df <- bind_cols(pc_df, 
+                      `School Type` = data$`School Type`)
+
+# Calculate centroids manually
+centroids <- pc_km_df %>%
+  group_by(`School Type`) %>%
+  summarise(
+    pc1 = mean(pc1, na.rm = TRUE),
+    pc2 = mean(pc2, na.rm = TRUE)
+  )
+
+# Plot
+p <- ggplot(pc_km_df, aes(x = pc1, y = pc2, colour = `School Type`)) +
+  geom_point(alpha = 0.6) +                                 # PCA scatter
+
+  # Density contours over the whole dataset (no group/colour)
+  geom_density_2d(data = pc_km_df, aes(x = pc1, y = pc2),
+                  colour = 'grey30', alpha = 0.7, inherit.aes = FALSE) +
+
+  # Centroid diamonds (school-type-colored fill, black outline)
+  geom_point(data = centroids,
+             aes(x = pc1, y = pc2, fill = `School Type`),
+             colour = 'black', shape = 23, size = 6, stroke = 1.2,
+             inherit.aes = FALSE) +
+
+  # REPEL Centroid labels (no overlap)
+  geom_label_repel(data = centroids,
+                   aes(x = pc1, y = pc2, label = `School Type`),
+                   size = 6, alpha = 0.85, label.size = 0.2,
+                   max.overlaps = Inf, box.padding = 0.5,
+                   inherit.aes = FALSE) +
+
+  # Remove duplicate legend
+  guides(colour = 'none') +
+
+  xlab('Principal Component 1') + 
+  ylab('Principal Component 2') +
+  ggtitle('First Two Principal Components with Colour by School Type') +
+  theme(
+    legend.title = element_text(size = 25),
+    legend.text = element_text(size = 20),
+    plot.title = element_text(size = 35, hjust = 0.5),
+    axis.title = element_text(size = 26),
+    axis.text = element_text(size = 25),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10)
+  )
+
+print(p)
+
+```
+
+
+```{r fig.width=17, fig.height=10}
+
+pc_km_df <- bind_cols(pc_df, 
+                      `School Level` = data$`School Level`)
+
+# Calculate centroids manually
+centroids <- pc_km_df %>%
+  group_by(`School Level`) %>%
+  summarise(
+    pc1 = mean(pc1, na.rm = TRUE),
+    pc2 = mean(pc2, na.rm = TRUE)
+  )
+
+# Plot
+p <- ggplot(pc_km_df, aes(x = pc1, y = pc2, colour = `School Level`)) +
+  geom_point(alpha = 0.6) +                                 # PCA scatter
+
+  # Density contours over the whole dataset (no group/colour)
+  geom_density_2d(data = pc_km_df, aes(x = pc1, y = pc2),
+                  colour = 'grey30', alpha = 0.7, inherit.aes = FALSE) +
+
+  # Centroid diamonds (school-type-colored fill, black outline)
+  geom_point(data = centroids,
+             aes(x = pc1, y = pc2, fill = `School Level`),
+             colour = 'black', shape = 23, size = 6, stroke = 1.2,
+             inherit.aes = FALSE) +
+
+  # REPEL Centroid labels (no overlap)
+  geom_label_repel(data = centroids,
+                   aes(x = pc1, y = pc2, label = `School Level`),
+                   size = 6, alpha = 0.85, label.size = 0.2,
+                   max.overlaps = Inf, box.padding = 0.5,
+                   inherit.aes = FALSE) +
+
+  # Remove duplicate legend
+  guides(colour = 'none') +
+
+  xlab('Principal Component 1') + 
+  ylab('Principal Component 2') +
+  ggtitle('First Two Principal Components with Colour by School Level') +
+  theme(
+    legend.title = element_text(size = 25),
+    legend.text = element_text(size = 20),
+    plot.title = element_text(size = 35, hjust = 0.5),
+    axis.title = element_text(size = 26),
+    axis.text = element_text(size = 25),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10)
+  )
+
+print(p)
+
+```
+
+
+```{r}
+
+loadings <- data_pca$rotation
+#print(loadings)
+
+# View contributions for PC1
+sort(abs(loadings[,1]), decreasing = TRUE)
+
+# View contributions for PC2
+sort(abs(loadings[,2]), decreasing = TRUE)
+```
+
+
+```{r}
+
+wss <- function(k) {
+  kmeans(data_pca$x, k, nstart = 10)$tot.withinss
+}
+
+# Compute and plot wss for k = 1 to k = 15
+k.values <- 1:12
+
+# extract wss for 2-15 clusters
+wss_values <- map_dbl(k.values, wss)
+
+plot(k.values, wss_values,
+       type='b', pch = 19, frame = FALSE, 
+       xlab='Number of clusters K',
+       ylab='Total within-clusters sum of squares')+
+  theme(
+    legend.title = element_text(size = 25),
+    legend.text = element_text(size = 20),
+    plot.title = element_text(size = 35, hjust = 0.5),  # Bigger, centered
+    axis.title = element_text(size = 26),
+    axis.text = element_text(size = 25),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10))
+
+```
+```{r fig.width=14, fig.height=10}
+
+#data_pca <- prcomp(ggpairs_data_na_omitted, center = TRUE, scale. = TRUE)
+
+fviz_nbclust(data_pca$x[, 1:2], kmeans, method = 'silhouette')
+fviz_nbclust(data_pca$x[, 1:5], kmeans, method = 'silhouette')
+fviz_nbclust(data_pca$x, kmeans, method = 'silhouette')
+
+
+```
+# It seems the optimal number of clusters is 2, but the average silhouette widt is 0.22 which is considered quite weak, therefore the PCA dimension reduction has not helped us in identifying potential clusters in the dataset, discuss no clear seperation when colouring the clusters in the scatterplot
+
+
+```{r fig.width=14, fig.height=10}
+
+library(factoextra)
+library(tidyverse)
+library(cluster)
+
+# Function to compute silhouette scores
+get_silhouette_scores <- function(data, pcs_label) {
+  map_dfr(2:10, function(k) {
+    km <- kmeans(data, centers = k, nstart = 10)
+    sil <- silhouette(km$cluster, dist(data))
+    data.frame(
+      k = k,
+      avg_sil_width = mean(sil[, 3]),
+      pcs = pcs_label
+    )
+  })
+}
+
+# Run for 2 PCs, 5 PCs, and all PCs
+sil_2pcs <- get_silhouette_scores(data_pca$x[, 1:2], 'PC1–2')
+sil_3pcs <- get_silhouette_scores(data_pca$x[, 1:3], 'PC1–3')
+sil_4pcs <- get_silhouette_scores(data_pca$x[, 1:4], 'PC1–4')
+sil_5pcs <- get_silhouette_scores(data_pca$x[, 1:5], 'PC1–5')
+sil_6pcs <- get_silhouette_scores(data_pca$x[, 1:6], 'PC1–6')
+sil_all  <- get_silhouette_scores(data_pca$x, 'All PCs')
+
+# Combine all results
+sil_df <- bind_rows(sil_2pcs, sil_3pcs,sil_4pcs,sil_5pcs,sil_6pcs,sil_all)
+
+# Find optimal k for each (highest silhouette score per PCA setting)
+optimal_k_df <- sil_df %>%
+  group_by(pcs) %>%
+  slice_max(order_by = avg_sil_width, n = 1)
+
+# Plot with text annotations at each optimal point
+ggplot(sil_df, aes(x = k, y = avg_sil_width, color = pcs)) +
+  geom_line() +
+  geom_point(size = 3) +
+  geom_text(data = optimal_k_df, aes(label = paste0('k=', k, ' (', round(avg_sil_width, 3),')')),
+            vjust = -1.2, size = 5, show.legend = FALSE) +
+  scale_x_continuous(limits = c(0, 10), breaks = 0:10) +
+  scale_y_continuous(limits = c(0, 0.5)) +
+  labs(title = 'Average Silhouette Width by Number of Clusters and PCs',
+       x = 'Number of Clusters (k)',
+       y = 'Average Silhouette Width',
+       color = 'PCs Used') +
+  theme_minimal()+
+  theme(
+    legend.title = element_text(size = 25),
+    legend.text = element_text(size = 20),
+    plot.title = element_text(size = 35, hjust = 0.5),  # Bigger, centered
+    axis.title = element_text(size = 26),
+    axis.text = element_text(size = 25),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10))
+
+
+
+```
+
+
+```{r fig.width=20, fig.height=12}
+
+# Function to compute silhouette scores (and include k = 1 manually)
+get_silhouette_scores <- function(data, pcs_label) {
+  sil_scores <- map_dfr(2:10, function(k) {
+    km <- kmeans(data, centers = k, nstart = 10)
+    sil <- silhouette(km$cluster, dist(data))
+    data.frame(
+      k = k,
+      avg_sil_width = mean(sil[, 3]),
+      pcs = pcs_label
+    )
+  })
+  
+  # Manually add k = 1 (silhouette is always 0 by definition)
+  bind_rows(data.frame(k = 1, avg_sil_width = 0, pcs = pcs_label), sil_scores)
+}
+
+# Run for all PCs
+sil_2pcs <- get_silhouette_scores(data_pca$x[, 1:2], 'PC1–2')
+sil_3pcs <- get_silhouette_scores(data_pca$x[, 1:3], 'PC1–3')
+sil_4pcs <- get_silhouette_scores(data_pca$x[, 1:4], 'PC1–4')
+sil_5pcs <- get_silhouette_scores(data_pca$x[, 1:5], 'PC1–5')
+sil_6pcs <- get_silhouette_scores(data_pca$x[, 1:6], 'PC1–6')
+#sil_all  <- get_silhouette_scores(data_pca$x, 'All PCs')
+
+# Combine all results
+sil_df <- bind_rows(sil_2pcs,sil_3pcs,sil_4pcs,sil_5pcs,sil_6pcs)
+
+# Find optimal k for each (excluding k = 1 from annotation search)
+optimal_k_df <- sil_df %>%
+  filter(k > 1) %>%
+  group_by(pcs) %>%
+  slice_max(order_by = avg_sil_width, n = 1)
+
+# Plot with text annotations and k = 1 included
+ggplot(sil_df, aes(x = k, y = avg_sil_width, color = pcs)) +
+  geom_line() +
+  geom_point(size = 3) +
+  geom_text(data = optimal_k_df, aes(label = paste0('k=', k, ' (', round(avg_sil_width, 3),')')),
+            vjust = -1.2, size = 5, show.legend = FALSE) +
+  scale_x_continuous(limits = c(0, 10), breaks = 0:10) +
+  scale_y_continuous(limits = c(0, 0.5)) +
+  labs(title = 'Average Silhouette Width by Number of Clusters (k) and Principal Components',
+       x = 'Number of Clusters (k)',
+       y = 'Average Silhouette Width',
+       color = 'PCs Used') +
+  theme_minimal()+
+  theme(
+    legend.title = element_text(size = 25),
+    legend.text = element_text(size = 20),
+    plot.title = element_text(size = 35, hjust = 0.5),  # Bigger, centered
+    axis.title = element_text(size = 26),
+    axis.text = element_text(size = 25),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10))
+
+
+```
+
+
+```{r fig.width=14, fig.height=10}
+
+biplot(data_pca, scale = 0)
+
+```
+
+```{r}
+
+dim(data_pca$x)
+
+
+```
